@@ -1,8 +1,8 @@
-# Denon AVR-1912 IR-styring
-# Koder fra Denons "master IR hex"-regneark, fanen "Main Zone ID#1" (AVR-xx08 og nyere).
-# Receiveren bruger to protokoller:
-#   - Sharp/Denon 15 bit  -> komponenten denon_ir (components/denon_ir), via script denon_sharp
-#   - Kaseikyo 48 bit     -> script denon_k       (= ESPHome "panasonic", adresse 0x2A4C)
+# Denon AVR-1912 IR control on an Athom AR01
+# Codes from Denon's "master IR hex" spreadsheet, sheet "Main Zone ID#1" (AVR-xx08 and later).
+# The receiver uses two protocols:
+#   - Sharp/Denon 15-bit -> the denon_ir component, via script denon_sharp
+#   - Kaseikyo 48-bit    -> script denon_k (= ESPHome "panasonic", address 0x2A4C)
 
 esphome:
   name: "denon-ir"
@@ -12,7 +12,7 @@ external_components:
   - source: github://Tntdruid/esphome-denon-ir
     components: [denon_ir]
 
-# Athom AR01 IR-remote (ESP8285). Pins fra Athoms egen ESPHome-config og Tasmota-opsætningen.
+# Athom AR01 IR remote (ESP8285). Pins from Athom's own ESPHome config.
 esp8266:
   board: esp8285
   restore_from_flash: true
@@ -27,7 +27,7 @@ logger:
 
 api:
   actions:
-    # Test fra Home Assistant (Udviklerværktøjer -> Handlinger). Tal er decimale:
+    # Test from Home Assistant (Developer tools -> Actions). Numbers are decimal:
     #   esphome.denon_ir_send_sharp  code: 8824        (= 0x2278, Main Zone ON)
     - action: send_sharp
       variables:
@@ -40,7 +40,7 @@ api:
         command: int
       then:
         - script.execute: { id: denon_k, cmd: !lambda "return command;" }
-    # Nødløsning: indsæt en Pronto-streng direkte fra regnearket
+    # Fallback: paste a Pronto string straight from the spreadsheet
     - action: send_pronto
       variables:
         pronto: string
@@ -61,7 +61,7 @@ wifi:
 captive_portal:
 
 # ---------------------------------------------------------------------------
-# IR-sender (Tasmota: GPIO4 = IRsend).
+# IR transmitter (GPIO4).
 # ---------------------------------------------------------------------------
 remote_transmitter:
   id: ir_tx
@@ -69,10 +69,9 @@ remote_transmitter:
   carrier_duty_percent: 50%
 
 # ---------------------------------------------------------------------------
-# (Valgfri) IR-modtager til at aflæse koder fra den originale fjernbetjening.
-# Tasmota: GPIO5 = IRrecv.
-# Sharp-koder logges som "denon_ir: Received code=0x2278 ...",
-# Kaseikyo-koder som "Panasonic: address=0x2A4C command=0x...".
+# (Optional) IR receiver (GPIO5), for learning codes from the original remote.
+# Sharp codes are logged as "denon_ir: Received code=0x2278 ...",
+# Kaseikyo codes as "Panasonic: address=0x2A4C command=0x...".
 # ---------------------------------------------------------------------------
 remote_receiver:
   id: ir_rx
@@ -83,22 +82,22 @@ remote_receiver:
   idle: 10ms
   dump: panasonic
 
-# Denon/Sharp 15-bit protokol (send + modtag)
+# Denon/Sharp 15-bit protocol (send + receive)
 denon_ir:
   id: denon
   transmitter_id: ir_tx
   receiver_id: ir_rx
-  # on_code:            # x = modtaget kode, fx til at reagere på den originale fjernbetjening
-  #   - logger.log: { format: "Kode 0x%04X", args: [x] }
+  # on_code:            # x = received code, e.g. to react to the original remote
+  #   - logger.log: { format: "Code 0x%04X", args: [x] }
 
-# Eksempel: binær sensor der pulser når den originale fjernbetjening sender Volume op
+# Example: binary sensor that pulses when the original remote sends Volume Up
 # binary_sensor:
 #   - platform: denon_ir
-#     name: "Fjernbetjening Volume op"
+#     name: "Remote Volume Up"
 #     code: 0x223C
 
 script:
-  # Køen sørger for pause mellem koder, så receiveren kan nå at reagere.
+  # Queued with a short delay so the receiver has time to react between codes.
   - id: denon_sharp
     mode: queued
     parameters:
@@ -108,7 +107,7 @@ script:
           code: !lambda "return code;"
       - delay: 80ms
 
-  # Kaseikyo 48 bit (Denon-producentkode 0x2A4C)
+  # Kaseikyo 48-bit (Denon vendor address 0x2A4C)
   - id: denon_k
     mode: queued
     parameters:
@@ -121,11 +120,11 @@ script:
       - delay: 80ms
 
 # ---------------------------------------------------------------------------
-# Indgangsvælger
+# Input and sound mode selectors
 # ---------------------------------------------------------------------------
 select:
   - platform: template
-    name: "Indgang"
+    name: "Input"
     icon: mdi:import
     optimistic: true
     options:
@@ -155,7 +154,7 @@ select:
           else if (x == "Net/USB")      id(denon_k).execute(0x028E34B8);
 
   - platform: template
-    name: "Lydtilstand"
+    name: "Sound Mode"
     icon: mdi:surround-sound
     optimistic: true
     options:
@@ -181,26 +180,26 @@ select:
           else if (x == "Auto")                 id(denon_k).execute(0x028228A8);
 
 # ---------------------------------------------------------------------------
-# Knapper
+# Buttons
 # ---------------------------------------------------------------------------
 button:
   - platform: template
-    name: "Tænd"
+    name: "Power On"
     icon: mdi:power-on
     on_press:
       - script.execute: { id: denon_sharp, code: 0x2278 }
   - platform: template
-    name: "Sluk"
+    name: "Power Off"
     icon: mdi:power-off
     on_press:
       - script.execute: { id: denon_sharp, code: 0x2178 }
   - platform: template
-    name: "Volume op"
+    name: "Volume Up"
     icon: mdi:volume-plus
     on_press:
       - script.execute: { id: denon_sharp, code: 0x223C }
   - platform: template
-    name: "Volume ned"
+    name: "Volume Down"
     icon: mdi:volume-minus
     on_press:
       - script.execute: { id: denon_sharp, code: 0x213C }

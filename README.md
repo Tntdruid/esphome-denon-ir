@@ -22,7 +22,7 @@ The timings come from Denon's official Pronto codes ("master IR hex" spreadsheet
 
 ```yaml
 external_components:
-  - source: github://Tntdruid/esphome-denon-ir
+  - source: github://Tntdruid/esphome-denon-ir@v1.0.0   # or @main for the latest
     components: [denon_ir]
 
 remote_transmitter:
