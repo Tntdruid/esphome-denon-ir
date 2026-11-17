@@ -1,0 +1,235 @@
+# Denon AVR-1912 IR-styring
+# Koder fra Denons "master IR hex"-regneark, fanen "Main Zone ID#1" (AVR-xx08 og nyere).
+# Receiveren bruger to protokoller:
+#   - Sharp/Denon 15 bit  -> komponenten denon_ir (components/denon_ir), via script denon_sharp
+#   - Kaseikyo 48 bit     -> script denon_k       (= ESPHome "panasonic", adresse 0x2A4C)
+
+esphome:
+  name: "denon-ir"
+  friendly_name: "Denon IR"
+
+external_components:
+  - source: github://Tntdruid/esphome-denon-ir
+    components: [denon_ir]
+
+# Athom AR01 IR-remote (ESP8285). Pins fra Athoms egen ESPHome-config og Tasmota-opsætningen.
+esp8266:
+  board: esp8285
+  restore_from_flash: true
+  early_pin_init: false
+
+status_led:
+  pin:
+    number: GPIO13
+    inverted: true
+
+logger:
+
+api:
+  actions:
+    # Test fra Home Assistant (Udviklerværktøjer -> Handlinger). Tal er decimale:
+    #   esphome.denon_ir_send_sharp  code: 8824        (= 0x2278, Main Zone ON)
+    - action: send_sharp
+      variables:
+        code: int
+      then:
+        - script.execute: { id: denon_sharp, code: !lambda "return code;" }
+    #   esphome.denon_ir_send_kaseikyo  command: 42874040  (= 0x028E34B8, Net/USB)
+    - action: send_kaseikyo
+      variables:
+        command: int
+      then:
+        - script.execute: { id: denon_k, cmd: !lambda "return command;" }
+    # Nødløsning: indsæt en Pronto-streng direkte fra regnearket
+    - action: send_pronto
+      variables:
+        pronto: string
+      then:
+        - remote_transmitter.transmit_pronto:
+            transmitter_id: ir_tx
+            data: !lambda "return pronto;"
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Denon IR Fallback"
+
+captive_portal:
+
+# ---------------------------------------------------------------------------
+# IR-sender (Tasmota: GPIO4 = IRsend).
+# ---------------------------------------------------------------------------
+remote_transmitter:
+  id: ir_tx
+  pin: GPIO4
+  carrier_duty_percent: 50%
+
+# ---------------------------------------------------------------------------
+# (Valgfri) IR-modtager til at aflæse koder fra den originale fjernbetjening.
+# Tasmota: GPIO5 = IRrecv.
+# Sharp-koder logges som "denon_ir: Received code=0x2278 ...",
+# Kaseikyo-koder som "Panasonic: address=0x2A4C command=0x...".
+# ---------------------------------------------------------------------------
+remote_receiver:
+  id: ir_rx
+  pin:
+    number: GPIO5
+    inverted: true
+  tolerance: 35%
+  idle: 10ms
+  dump: panasonic
+
+# Denon/Sharp 15-bit protokol (send + modtag)
+denon_ir:
+  id: denon
+  transmitter_id: ir_tx
+  receiver_id: ir_rx
+  # on_code:            # x = modtaget kode, fx til at reagere på den originale fjernbetjening
+  #   - logger.log: { format: "Kode 0x%04X", args: [x] }
+
+# Eksempel: binær sensor der pulser når den originale fjernbetjening sender Volume op
+# binary_sensor:
+#   - platform: denon_ir
+#     name: "Fjernbetjening Volume op"
+#     code: 0x223C
+
+script:
+  # Køen sørger for pause mellem koder, så receiveren kan nå at reagere.
+  - id: denon_sharp
+    mode: queued
+    parameters:
+      code: int
+    then:
+      - denon_ir.transmit:
+          code: !lambda "return code;"
+      - delay: 80ms
+
+  # Kaseikyo 48 bit (Denon-producentkode 0x2A4C)
+  - id: denon_k
+    mode: queued
+    parameters:
+      cmd: int
+    then:
+      - remote_transmitter.transmit_panasonic:
+          transmitter_id: ir_tx
+          address: 0x2A4C
+          command: !lambda "return (uint32_t) cmd;"
+      - delay: 80ms
+
+# ---------------------------------------------------------------------------
+# Indgangsvælger
+# ---------------------------------------------------------------------------
+select:
+  - platform: template
+    name: "Indgang"
+    icon: mdi:import
+    optimistic: true
+    options:
+      - "CBL/SAT"
+      - "DVD"
+      - "Blu-ray"
+      - "Game"
+      - "Media Player"
+      - "TV Audio"
+      - "AUX1"
+      - "AUX2"
+      - "Tuner"
+      - "CD"
+      - "Net/USB"
+    set_action:
+      - lambda: |-
+          if      (x == "CBL/SAT")      id(denon_sharp).execute(0x204C);
+          else if (x == "DVD")          id(denon_sharp).execute(0x231C);
+          else if (x == "Blu-ray")      id(denon_sharp).execute(0x214C);
+          else if (x == "Game")         id(denon_sharp).execute(0x22CC);
+          else if (x == "Media Player") id(denon_sharp).execute(0x21CC);
+          else if (x == "TV Audio")     id(denon_sharp).execute(0x224C);
+          else if (x == "AUX1")         id(denon_sharp).execute(0x20CC);
+          else if (x == "AUX2")         id(denon_k).execute(0x0285B433);
+          else if (x == "Tuner")        id(denon_sharp).execute(0x228C);
+          else if (x == "CD")           id(denon_sharp).execute(0x208C);
+          else if (x == "Net/USB")      id(denon_k).execute(0x028E34B8);
+
+  - platform: template
+    name: "Lydtilstand"
+    icon: mdi:surround-sound
+    optimistic: true
+    options:
+      - "Movie"
+      - "Music"
+      - "Game"
+      - "Pure Direct"
+      - "Direct/Stereo"
+      - "Stereo"
+      - "Standard (Dolby/DTS)"
+      - "Multi Ch Stereo"
+      - "Auto"
+    set_action:
+      - lambda: |-
+          if      (x == "Movie")                id(denon_k).execute(0x028928A3);
+          else if (x == "Music")                id(denon_sharp).execute(0x11A4);
+          else if (x == "Game")                 id(denon_sharp).execute(0x13A4);
+          else if (x == "Pure Direct")          id(denon_sharp).execute(0x2158);
+          else if (x == "Direct/Stereo")        id(denon_k).execute(0x0288C842);
+          else if (x == "Stereo")               id(denon_sharp).execute(0x1AE4);
+          else if (x == "Standard (Dolby/DTS)") id(denon_sharp).execute(0x209C);
+          else if (x == "Multi Ch Stereo")      id(denon_sharp).execute(0x1854);
+          else if (x == "Auto")                 id(denon_k).execute(0x028228A8);
+
+# ---------------------------------------------------------------------------
+# Knapper
+# ---------------------------------------------------------------------------
+button:
+  - platform: template
+    name: "Tænd"
+    icon: mdi:power-on
+    on_press:
+      - script.execute: { id: denon_sharp, code: 0x2278 }
+  - platform: template
+    name: "Sluk"
+    icon: mdi:power-off
+    on_press:
+      - script.execute: { id: denon_sharp, code: 0x2178 }
+  - platform: template
+    name: "Volume op"
+    icon: mdi:volume-plus
+    on_press:
+      - script.execute: { id: denon_sharp, code: 0x223C }
+  - platform: template
+    name: "Volume ned"
+    icon: mdi:volume-minus
+    on_press:
+      - script.execute: { id: denon_sharp, code: 0x213C }
+  - platform: template
+    name: "Mute"
+    icon: mdi:volume-mute
+    on_press:
+      - script.execute: { id: denon_sharp, code: 0x203C }
+  - platform: template
+    name: "Quick Select 1"
+    on_press:
+      - script.execute: { id: denon_k, cmd: 0x028248C8 }
+  - platform: template
+    name: "Quick Select 2"
+    on_press:
+      - script.execute: { id: denon_k, cmd: 0x028A48C0 }
+  - platform: template
+    name: "Quick Select 3"
+    on_press:
+      - script.execute: { id: denon_k, cmd: 0x028648CC }
+  - platform: template
+    name: "Quick Select 4"
+    on_press:
+      - script.execute: { id: denon_k, cmd: 0x028E48C4 }
+  - platform: template
+    name: "Sleep"
+    icon: mdi:sleep
+    on_press:
+      - script.execute: { id: denon_k, cmd: 0x02822CAC }
+
+  - platform: safe_mode
+    name: (Safe Mode)
